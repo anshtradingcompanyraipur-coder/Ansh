@@ -1,8 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "atc_final_clean_v2";
-const ADMIN_EMAIL = "admin@anshtradingcompany.com";
-const ADMIN_PASSWORD = "ATC@12345";
+const ADMIN_SESSION_KEY = "atc_admin_auth_session";
+
+// Permanent Admin Save Setup
+// Supabase me project banakar ye 2 value paste karni hai.
+const SUPABASE_URL = "https://syuwlzojumbmscblwxms.supabase.co";
+const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_KEY_HERE";
+const SUPABASE_TABLE = "site_content";
+const SITE_ROW_ID = "main";
+const SUPABASE_ENABLED = SUPABASE_URL.startsWith("https://") && !SUPABASE_ANON_KEY.includes("PASTE_");
 
 const DEFAULT_SITE = {
   popupDelay: 30000,
@@ -121,25 +128,130 @@ function saveSafe(site) {
   return safe;
 }
 
+function hydrateSite(saved) {
+  if (!saved) return cloneData(DEFAULT_SITE);
+  return {
+    ...cloneData(DEFAULT_SITE),
+    ...saved,
+    company: { ...cloneData(DEFAULT_SITE.company), ...(saved.company || {}) },
+    hero: { ...cloneData(DEFAULT_SITE.hero), ...(saved.hero || {}) },
+    products: (saved.products || DEFAULT_SITE.products).map(normalizeItem),
+    services: (saved.services || DEFAULT_SITE.services).map(normalizeItem),
+    benefits: saved.benefits || cloneData(DEFAULT_SITE.benefits),
+    gallery: saved.gallery || cloneData(DEFAULT_SITE.gallery),
+    faqs: saved.faqs || cloneData(DEFAULT_SITE.faqs)
+  };
+}
+
 function loadSite() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return cloneData(DEFAULT_SITE);
-    const saved = JSON.parse(raw);
-    return {
-      ...cloneData(DEFAULT_SITE),
-      ...saved,
-      company: { ...cloneData(DEFAULT_SITE.company), ...(saved.company || {}) },
-      hero: { ...cloneData(DEFAULT_SITE.hero), ...(saved.hero || {}) },
-      products: (saved.products || DEFAULT_SITE.products).map(normalizeItem),
-      services: (saved.services || DEFAULT_SITE.services).map(normalizeItem),
-      benefits: saved.benefits || cloneData(DEFAULT_SITE.benefits),
-      gallery: saved.gallery || cloneData(DEFAULT_SITE.gallery),
-      faqs: saved.faqs || cloneData(DEFAULT_SITE.faqs)
-    };
+    return hydrateSite(JSON.parse(raw));
   } catch {
     return cloneData(DEFAULT_SITE);
   }
+}
+
+function supabaseHeaders(extra = {}, accessToken = "") {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: "Bearer " + (accessToken || SUPABASE_ANON_KEY),
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+
+async function fetchPermanentSite() {
+  if (!SUPABASE_ENABLED) return null;
+
+  const url = `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}?id=eq.${SITE_ROW_ID}&select=data`;
+  const response = await fetch(url, { headers: supabaseHeaders() });
+
+  if (!response.ok) throw new Error("Permanent data load failed");
+
+  const rows = await response.json();
+  if (!rows || !rows[0] || !rows[0].data) return null;
+
+  const site = hydrateSite(rows[0].data);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(saveSafe(site)));
+  return site;
+}
+
+async function savePermanentSite(site, accessToken) {
+  const safe = saveSafe(site);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+
+  if (!SUPABASE_ENABLED) return { mode: "local" };
+  if (!accessToken) throw new Error("Admin login required");
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}`, {
+    method: "POST",
+    headers: supabaseHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }, accessToken),
+    body: JSON.stringify({
+      id: SITE_ROW_ID,
+      data: safe,
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  if (!response.ok) throw new Error("Permanent save failed");
+  return { mode: "supabase" };
+}
+
+function loadAdminSession() {
+  try {
+    const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    if (!session || !session.access_token) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+async function signInAdmin(email, password) {
+  if (!SUPABASE_ENABLED) {
+    throw new Error("First add Supabase URL and anon key in code.");
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ email, password })
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data || !data.access_token) {
+    throw new Error("Wrong email/password or Supabase Auth is not configured.");
+  }
+
+  const session = {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at: data.expires_at,
+    user: data.user
+  };
+
+  sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+  return session;
+}
+
+async function signOutAdmin(accessToken) {
+  try {
+    if (SUPABASE_ENABLED && accessToken) {
+      await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+        method: "POST",
+        headers: supabaseHeaders({}, accessToken)
+      });
+    }
+  } catch {
+    // Ignore logout API errors and clear local session anyway.
+  }
+
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
 }
 
 function SEO({ site }) {
@@ -556,30 +668,35 @@ function AdminLogin({ onSuccess, onCancel }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
-    if (email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
-      sessionStorage.setItem("atc_admin_login", "yes");
-      setError("");
-      onSuccess();
-    } else {
-      setError("Wrong email or password.");
+    setBusy(true);
+    setError("");
+
+    try {
+      const session = await signInAdmin(email.trim(), password);
+      onSuccess(session);
+    } catch (err) {
+      setError(err.message || "Login failed.");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/80 p-4 backdrop-blur-md">
       <form onSubmit={submit} className="w-full max-w-md rounded-[2rem] bg-white p-7 shadow-2xl">
-        <h2 className="text-3xl font-black text-slate-950">Admin Login</h2>
-        <p className="mt-2 text-sm font-bold text-slate-500">Enter authorized credentials to continue.</p>
+        <h2 className="text-3xl font-black text-slate-950">Secure Admin Login</h2>
+        <p className="mt-2 text-sm font-bold text-slate-500">Login with your Supabase Auth admin account.</p>
         <div className="mt-6 grid gap-4">
-          <input type="email" required placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-4 outline-none" />
-          <input type="password" required placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-4 outline-none" />
+          <input type="email" required placeholder="Admin email" value={email} onChange={(e) => setEmail(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-4 outline-none" />
+          <input type="password" required placeholder="Admin password" value={password} onChange={(e) => setPassword(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-4 outline-none" />
         </div>
         {error ? <p className="mt-4 rounded-2xl bg-red-100 p-3 font-black text-red-600">{error}</p> : null}
         <div className="mt-6 flex gap-3">
-          <button type="submit" className="flex-1 rounded-full bg-blue-950 px-5 py-3 font-black text-white">Login</button>
+          <button type="submit" disabled={busy} className="flex-1 rounded-full bg-blue-950 px-5 py-3 font-black text-white disabled:opacity-60">{busy ? "Logging in..." : "Login"}</button>
           <button type="button" onClick={onCancel} className="rounded-full bg-slate-100 px-5 py-3 font-black text-slate-800">Cancel</button>
         </div>
       </form>
@@ -587,7 +704,7 @@ function AdminLogin({ onSuccess, onCancel }) {
   );
 }
 
-function Admin({ site, setSite, close }) {
+function Admin({ site, setSite, close, authSession, onLogout }) {
   const [tab, setTab] = useState("company");
   const [saveMsg, setSaveMsg] = useState("");
 
@@ -605,12 +722,16 @@ function Admin({ site, setSite, close }) {
     setSite(next);
   }
 
-  function save() {
+  async function save() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saveSafe(site)));
-      setSaveMsg("Saved successfully.");
+      const result = await savePermanentSite(site, authSession?.access_token);
+      if (result.mode === "supabase") {
+        setSaveMsg("Saved permanently online. Changes will show for everyone.");
+      } else {
+        setSaveMsg("Saved in this browser only. Add Supabase URL/key for permanent online save.");
+      }
     } catch {
-      setSaveMsg("Save failed. Use image URL for large photos.");
+      setSaveMsg("Permanent save failed. Check Supabase URL, anon key, table and policies.");
     }
   }
 
@@ -645,187 +766,3 @@ function Admin({ site, setSite, close }) {
     Array.from(files || []).forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
-        const next = cloneData(site);
-        next.gallery.push(String(reader.result || ""));
-        setSite(next);
-        setSaveMsg("Gallery preview added. Use image URL for permanent storage.");
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  return (
-    <div className="fixed inset-0 z-[100] bg-black/70 p-4">
-      <div className="mx-auto flex h-full max-w-6xl flex-col rounded-[2rem] bg-white shadow-2xl">
-        <div className="flex justify-between border-b p-4">
-          <div>
-            <h2 className="text-2xl font-black">Admin Panel</h2>
-            <p className="text-xs font-bold text-slate-500">Website content management</p>
-          </div>
-          <button type="button" onClick={close} className="rounded-xl bg-slate-900 px-4 py-2 font-black text-white">Close</button>
-        </div>
-
-        <div className="flex gap-2 overflow-x-auto border-b p-3">
-          {["company", "hero", "products", "services", "benefits", "gallery", "faqs"].map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={(tab === item ? "bg-cyan-400" : "bg-slate-100") + " rounded-full px-4 py-2 font-black capitalize"}>{item}</button>)}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4">
-          {tab === "company" ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {field("company name", site.company.name, (v) => update(["company", "name"], v))}
-              {field("group", site.company.group, (v) => update(["company", "group"], v))}
-              {field("logo text", site.company.logo, (v) => update(["company", "logo"], v))}
-              {field("logo image url", site.company.logoImage, (v) => update(["company", "logoImage"], v))}
-              {field("tagline", site.company.tagline, (v) => update(["company", "tagline"], v))}
-              {field("phone", site.company.phone, (v) => update(["company", "phone"], v))}
-              {field("whatsapp", site.company.whatsapp, (v) => update(["company", "whatsapp"], v))}
-              {field("email", site.company.email, (v) => update(["company", "email"], v))}
-              {field("instagram", site.company.instagram, (v) => update(["company", "instagram"], v))}
-              {field("location", site.company.location, (v) => update(["company", "location"], v))}
-              {field("map embed url", site.company.mapEmbed, (v) => update(["company", "mapEmbed"], v))}
-              {field("google sheet webhook url", site.company.sheetWebhook, (v) => update(["company", "sheetWebhook"], v))}
-              {field("popup delay", String(site.popupDelay), (v) => update(["popupDelay"], Number(v)))}
-            </div>
-          ) : null}
-
-          {tab === "hero" ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {field("title", site.hero.title, (v) => update(["hero", "title"], v))}
-              {field("text", site.hero.text, (v) => update(["hero", "text"], v))}
-              {field("background image url", site.hero.bg, (v) => update(["hero", "bg"], v))}
-              {field("side image url", site.hero.img, (v) => update(["hero", "img"], v))}
-            </div>
-          ) : null}
-
-          {["products", "services", "benefits"].includes(tab) ? listEditor(tab) : null}
-
-          {tab === "gallery" ? (
-            <div className="grid gap-4">
-              <div className="rounded-2xl border-2 border-dashed border-cyan-300 bg-cyan-50 p-5">
-                <p className="text-xl font-black">Upload Gallery Photos</p>
-                <input type="file" accept="image/*" multiple onChange={(e) => addGalleryFiles(e.target.files)} className="mt-4" />
-              </div>
-              {site.gallery.map((img, index) => <div key={index} className="grid gap-3 rounded-2xl bg-slate-50 p-4 md:grid-cols-[180px_1fr]"><div>{img ? <img src={img} alt={"gallery " + index} className="h-28 w-full rounded-2xl object-cover" /> : <div className="grid h-28 place-items-center rounded-2xl bg-white text-sm font-black text-slate-400">No Image</div>}</div><div>{field("image url " + (index + 1), img, (v) => { const next = cloneData(site); next.gallery[index] = v; setSite(next); })}<button type="button" onClick={() => { const next = cloneData(site); next.gallery.splice(index, 1); setSite(next); }} className="mt-3 rounded-xl bg-red-500 px-4 py-2 font-black text-white">Remove</button></div></div>)}
-              <button type="button" onClick={() => { const next = cloneData(site); next.gallery.push(""); setSite(next); }} className="rounded-full bg-cyan-400 px-5 py-3 font-black">Add Image URL</button>
-            </div>
-          ) : null}
-
-          {tab === "faqs" ? (
-            <div className="grid gap-4">
-              {site.faqs.map((item, index) => <div key={index} className="grid gap-3 rounded-2xl bg-slate-50 p-4">{field("question", item.q, (v) => { const next = cloneData(site); next.faqs[index].q = v; setSite(next); })}{field("answer", item.a, (v) => { const next = cloneData(site); next.faqs[index].a = v; setSite(next); })}<button type="button" onClick={() => { const next = cloneData(site); next.faqs.splice(index, 1); setSite(next); }} className="rounded-xl bg-red-500 px-4 py-2 font-black text-white">Remove FAQ</button></div>)}
-              <button type="button" onClick={() => { const next = cloneData(site); next.faqs.push({ q: "New question", a: "New answer" }); setSite(next); }} className="rounded-full bg-cyan-400 px-5 py-3 font-black">Add FAQ</button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="border-t p-4">
-          <p className="mb-2 text-sm font-black text-cyan-700">{saveMsg}</p>
-          <div className="flex justify-end gap-3">
-            <button type="button" onClick={() => { setSite(cloneData(DEFAULT_SITE)); setSaveMsg("Reset done. Click Save to store reset data."); }} className="rounded-full bg-red-500 px-5 py-3 font-black text-white">Reset</button>
-            <button type="button" onClick={save} className="rounded-full bg-blue-950 px-5 py-3 font-black text-white">Save</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Popup({ site }) {
-  const [show, setShow] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setShow(true), Number(site.popupDelay) || 30000);
-    return () => clearTimeout(timer);
-  }, [site.popupDelay]);
-
-  if (!show) return null;
-
-  return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/80 p-4 backdrop-blur-md">
-      <div className="relative max-w-lg overflow-hidden rounded-[2.4rem] border border-white/20 bg-white shadow-2xl" style={{ animation: "popupIn .55s cubic-bezier(.2,.9,.2,1) both" }}>
-        <button type="button" onClick={() => setShow(false)} className="absolute right-4 top-4 z-10 grid h-10 w-10 place-items-center rounded-full bg-white/90 text-xl font-black text-slate-950 shadow-lg">×</button>
-        <div className="relative bg-gradient-to-br from-blue-950 via-slate-950 to-cyan-700 p-8 text-white">
-          <p className="inline-flex rounded-full border border-cyan-200/30 bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[.2em] text-cyan-100 backdrop-blur-xl">Consultation</p>
-          <h3 className="mt-5 text-3xl font-black leading-tight md:text-4xl">Need Solar, Plumbing or Pumping Solution?</h3>
-          <p className="mt-3 leading-7 text-slate-200">Send your enquiry and connect with our team.</p>
-        </div>
-        <div className="p-7">
-          <a href={whatsappUrl(site, "Hello, I want consultation from Ansh Trading Company. Please share details.")} target="_blank" rel="noreferrer" className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#25D366] px-6 py-4 text-center font-black text-white">
-            <IconSvg type="whatsapp" /> WhatsApp Enquiry Now
-          </a>
-          <button type="button" onClick={() => setShow(false)} className="mt-3 w-full rounded-full border border-slate-200 px-6 py-3 font-black text-slate-700">Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Floating({ site }) {
-  const items = [
-    { label: "WhatsApp", type: "whatsapp", href: whatsappUrl(site, "Hello, I want enquiry"), bg: "bg-[#25D366] text-white" },
-    { label: "Call", type: "phone", href: callUrl(site), bg: "bg-cyan-400 text-slate-950" },
-    { label: "Instagram", type: "instagram", href: instagramUrl(site), bg: "bg-white text-slate-950" },
-    { label: "Email", type: "mail", href: "mailto:" + site.company.email, bg: "bg-white text-slate-950" }
-  ];
-
-  return (
-    <div className="fixed bottom-5 right-5 z-[70] grid gap-3">
-      {items.map((item) => (
-        <a
-          key={item.label}
-          href={item.href}
-          target={item.href.startsWith("http") ? "_blank" : undefined}
-          rel={item.href.startsWith("http") ? "noreferrer" : undefined}
-          title={item.label}
-          className={item.bg + " grid h-14 w-14 place-items-center rounded-full shadow-2xl transition hover:-translate-y-1 hover:scale-110"}
-        >
-          <IconSvg type={item.type} />
-        </a>
-      ))}
-    </div>
-  );
-}
-
-export default function App() {
-  const [site, setSite] = useState(() => loadSite());
-  const [admin, setAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 700);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    const syncAdminHash = () => setAdmin(window.location.hash === "#admin");
-    syncAdminHash();
-    window.addEventListener("hashchange", syncAdminHash);
-    return () => window.removeEventListener("hashchange", syncAdminHash);
-  }, []);
-
-  return (
-    <div className="min-h-screen bg-white text-slate-950">
-      <SEO site={site} />
-      {loading ? <Loader /> : null}
-      <Header site={site} />
-      <Hero site={site} />
-      <About site={site} />
-      <Cards site={site} id="products" small="Products" title="Our Product Solutions" items={site.products} />
-      <Cards site={site} id="services" small="Services" title="Professional Services" items={site.services} dark />
-      <Benefits site={site} />
-      <Enquiry site={site} />
-      <Gallery site={site} />
-      <FAQ site={site} />
-      <Contact site={site} />
-      <Floating site={site} />
-      <Popup site={site} />
-      {admin ? (
-        sessionStorage.getItem("atc_admin_login") === "yes" ? (
-          <Admin site={site} setSite={setSite} close={() => { window.location.hash = ""; setAdmin(false); }} />
-        ) : (
-          <AdminLogin onSuccess={() => setAdmin(true)} onCancel={() => { window.location.hash = ""; setAdmin(false); }} />
-        )
-      ) : null}
-    </div>
-  );
-}
