@@ -6,7 +6,7 @@ const ADMIN_SESSION_KEY = "atc_admin_auth_session";
 // Permanent Admin Save Setup
 // Supabase me project banakar ye 2 value paste karni hai.
 const SUPABASE_URL = "https://syuwlzojumbmscblwxms.supabase.co";
-const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_KEY_HERE";
+const SUPABASE_ANON_KEY = "sb_publishable_Nlvsc5JkmwZCU6z-3uIBwQ_hKzthji7";
 const SUPABASE_TABLE = "site_content";
 const SITE_ROW_ID = "main";
 const SUPABASE_ENABLED = SUPABASE_URL.startsWith("https://") && !SUPABASE_ANON_KEY.includes("PASTE_");
