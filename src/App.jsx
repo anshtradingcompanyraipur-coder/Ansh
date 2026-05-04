@@ -78,6 +78,9 @@ const DEFAULT_SITE = {
     { title: "Become an Associate", icon: "🤝", text: "Join our associate network and work on customer leads." },
     { title: "Quality Service B2C", icon: "🏆", text: "Reliable execution with strong customer support." }
   ],
+  aboutImages: [
+    "/ansh-side-image.png"
+  ],
   gallery: [
     "https://images.unsplash.com/photo-1509391366360-2e959784a276?auto=format&fit=crop&w=1200&q=90",
     "https://images.unsplash.com/photo-1613665813446-82a78c468a1d?auto=format&fit=crop&w=1200&q=90",
@@ -174,6 +177,7 @@ function hydrateSite(saved) {
     products: (saved.products || DEFAULT_SITE.products).map(normalizeItem),
     services: (saved.services || DEFAULT_SITE.services).map(normalizeItem),
     benefits: saved.benefits || cloneData(DEFAULT_SITE.benefits),
+    aboutImages: saved.aboutImages || cloneData(DEFAULT_SITE.aboutImages),
     gallery: saved.gallery || cloneData(DEFAULT_SITE.gallery),
     faqs: saved.faqs || cloneData(DEFAULT_SITE.faqs)
   };
@@ -510,7 +514,7 @@ function ProductSlider({ site, items }) {
 }
 
 function About({ site }) {
-  const aboutImages = [site.hero.img, site.hero.bg, ...site.gallery].filter(Boolean);
+  const aboutImages = (site.aboutImages && site.aboutImages.length ? site.aboutImages : [site.hero.img, site.hero.bg, ...site.gallery]).filter(Boolean);
   return (
     <section id="about" className="bg-white px-4 py-20 md:px-8">
       <div className="mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-2">
@@ -842,7 +846,7 @@ function Admin({ site, setSite, close, authSession, onLogout }) {
         </div>
 
         <div className="flex gap-2 overflow-x-auto border-b p-3">
-          {["company", "hero", "products", "services", "benefits", "gallery", "faqs"].map((item) => (
+          {["company", "hero", "about slider", "products", "services", "benefits", "gallery", "faqs"].map((item) => (
             <button key={item} type="button" onClick={() => setTab(item)} className={(tab === item ? "bg-cyan-400" : "bg-slate-100") + " rounded-full px-4 py-2 font-black capitalize"}>{item}</button>
           ))}
         </div>
@@ -872,6 +876,44 @@ function Admin({ site, setSite, close, authSession, onLogout }) {
               {field("text", site.hero.text, (v) => update(["hero", "text"], v))}
               {field("background image url", site.hero.bg, (v) => update(["hero", "bg"], v))}
               {field("side image url", site.hero.img, (v) => update(["hero", "img"], v))}
+            </div>
+          ) : null}
+
+          {tab === "about slider" ? (
+            <div className="grid gap-4">
+              <div className="rounded-2xl border-2 border-dashed border-cyan-300 bg-cyan-50 p-5">
+                <p className="text-xl font-black">About Slider Images</p>
+                <p className="mt-2 text-sm font-bold text-slate-600">Yahan image URL/path dalo. Example: /ansh-side-image.png</p>
+              </div>
+
+              {(site.aboutImages || []).map((img, index) => (
+                <div key={index} className="grid gap-3 rounded-2xl bg-slate-50 p-4 md:grid-cols-[180px_1fr]">
+                  <div>
+                    {img ? <img src={img} alt={"about slider " + index} className="h-28 w-full rounded-2xl object-cover" /> : <div className="grid h-28 place-items-center rounded-2xl bg-white text-sm font-black text-slate-400">No Image</div>}
+                  </div>
+                  <div>
+                    {field("about slider image url " + (index + 1), img, (v) => {
+                      const next = cloneData(site);
+                      next.aboutImages = next.aboutImages || [];
+                      next.aboutImages[index] = v;
+                      setSite(next);
+                    })}
+                    <button type="button" onClick={() => {
+                      const next = cloneData(site);
+                      next.aboutImages = next.aboutImages || [];
+                      next.aboutImages.splice(index, 1);
+                      setSite(next);
+                    }} className="mt-3 rounded-xl bg-red-500 px-4 py-2 font-black text-white">Remove</button>
+                  </div>
+                </div>
+              ))}
+
+              <button type="button" onClick={() => {
+                const next = cloneData(site);
+                next.aboutImages = next.aboutImages || [];
+                next.aboutImages.push("/ansh-side-image.png");
+                setSite(next);
+              }} className="rounded-full bg-cyan-400 px-5 py-3 font-black">Add About Image</button>
             </div>
           ) : null}
 
