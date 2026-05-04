@@ -33,6 +33,11 @@ const DEFAULT_SITE = {
     bg: "https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?auto=format&fit=crop&w=1800&q=85",
     img: "https://images.unsplash.com/photo-1613665813446-82a78c468a1d?auto=format&fit=crop&w=1200&q=85"
   },
+  about: {
+    small: "About Us",
+    title: "Trusted Business Solutions Since 2019",
+    text: "Ansh Trading And Company is a Raipur, Chhattisgarh based proprietorship firm established in 2019. We provide reliable solutions in hardware, sanitary fittings, plumbing, solar setup, borewell and pumping solutions, and civil construction support. With over 7 years of business experience, we focus on quality products, professional service, timely response and complete customer satisfaction for residential, commercial and project-based clients."
+  },
   products: [
     {
       title: "Complete Solar Setup",
@@ -174,6 +179,7 @@ function hydrateSite(saved) {
     ...saved,
     company: { ...cloneData(DEFAULT_SITE.company), ...(saved.company || {}) },
     hero: { ...cloneData(DEFAULT_SITE.hero), ...(saved.hero || {}) },
+    about: { ...cloneData(DEFAULT_SITE.about), ...(saved.about || {}) },
     products: (saved.products || DEFAULT_SITE.products).map(normalizeItem),
     services: (saved.services || DEFAULT_SITE.services).map(normalizeItem),
     benefits: saved.benefits || cloneData(DEFAULT_SITE.benefits),
@@ -520,9 +526,9 @@ function About({ site }) {
       <div className="mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-2">
         <ImageSlider images={aboutImages} />
         <div>
-          <p className="mb-3 text-sm font-black uppercase tracking-[.25em] text-cyan-500">About Us</p>
-          <h2 className="text-3xl font-black leading-tight text-slate-950 md:text-5xl">Complete solutions under one trusted brand.</h2>
-          <p className="mt-5 text-lg leading-8 text-slate-600">{site.company.name} provides complete solutions in solar installation, plumbing, pumping and civil construction for B2C and project-based clients.</p>
+          <p className="mb-3 text-sm font-black uppercase tracking-[.25em] text-cyan-500">{site.about?.small || "About Us"}</p>
+          <h2 className="text-3xl font-black leading-tight text-slate-950 md:text-5xl">{site.about?.title || "Trusted Business Solutions Since 2019"}</h2>
+          <p className="mt-5 text-lg leading-8 text-slate-600">{site.about?.text || "Ansh Trading And Company is a Raipur, Chhattisgarh based proprietorship firm established in 2019. We provide reliable solutions in hardware, sanitary fittings, plumbing, solar setup, borewell and pumping solutions, and civil construction support."}</p>
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
             {["Professional Team", "Quality Service", "Project Support", "Fast Response"].map((item) => <div key={item} className="rounded-2xl bg-slate-50 p-4 font-black shadow">✓ {item}</div>)}
           </div>
@@ -846,7 +852,7 @@ function Admin({ site, setSite, close, authSession, onLogout }) {
         </div>
 
         <div className="flex gap-2 overflow-x-auto border-b p-3">
-          {["company", "hero", "about slider", "products", "services", "benefits", "gallery", "faqs"].map((item) => (
+          {["company", "hero", "about", "about slider", "products", "services", "benefits", "gallery", "faqs"].map((item) => (
             <button key={item} type="button" onClick={() => setTab(item)} className={(tab === item ? "bg-cyan-400" : "bg-slate-100") + " rounded-full px-4 py-2 font-black capitalize"}>{item}</button>
           ))}
         </div>
@@ -876,6 +882,21 @@ function Admin({ site, setSite, close, authSession, onLogout }) {
               {field("text", site.hero.text, (v) => update(["hero", "text"], v))}
               {field("background image url", site.hero.bg, (v) => update(["hero", "bg"], v))}
               {field("side image url", site.hero.img, (v) => update(["hero", "img"], v))}
+            </div>
+          ) : null}
+
+          {tab === "about" ? (
+            <div className="grid gap-4">
+              <div className="rounded-2xl border-2 border-dashed border-cyan-300 bg-cyan-50 p-5">
+                <p className="text-xl font-black">About Section Content</p>
+                <p className="mt-2 text-sm font-bold text-slate-600">Yahan se website ka About title aur paragraph permanently edit kar sakte ho.</p>
+              </div>
+              {field("small heading", site.about?.small || "About Us", (v) => update(["about", "small"], v))}
+              {field("about title", site.about?.title || "", (v) => update(["about", "title"], v))}
+              <label className="block">
+                <span className="text-xs font-black uppercase text-slate-500">about description</span>
+                <textarea value={site.about?.text || ""} onChange={(e) => update(["about", "text"], e.target.value)} className="w-full rounded-xl border px-3 py-2" rows={8} />
+              </label>
             </div>
           ) : null}
 
